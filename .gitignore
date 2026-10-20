@@ -1,0 +1,4 @@
+# IDE
+.idea/
+# PyCharm 模板文件，与课程无关
+main.py

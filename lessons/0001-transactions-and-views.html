@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 1 课 · 事务与视图</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<main>
+
+<p class="kicker">Foundry 数据集层 · 第 1 课 · 约 30 分钟</p>
+<h1>数据集 = 文件 + 事务 → 视图</h1>
+<p class="lede">学完这一课，给你任意一串事务历史，你能算出任意时间点数据集里"看得到"的是哪些文件。</p>
+
+<div class="chain" aria-label="整条链路中本课的位置">
+  <span class="here">文件</span><i>→</i><span class="here">事务</span><i>→</i><span class="here">视图</span><i>→</i>
+  <span>分支</span><i>→</i><span>构建</span><i>→</i><span>质量检查</span><i>→</i><span>Ontology</span><i>→</i><span>权限</span>
+</div>
+<p class="muted">这是你的使命里要画出的那条链路。本课打地基：前三环。后面每一环都建立在"视图"这个概念上。</p>
+
+<h2>1. 数据集只是一层包装</h2>
+<p>Foundry 的数据集里并没有"一张表"。它是一组文件外面的一层包装：</p>
+<blockquote>"Fundamentally, a dataset is a wrapper around a collection of files…"
+<cite>— <a href="https://www.palantir.com/docs/foundry/data-integration/datasets">Palantir Docs · Datasets</a></cite></blockquote>
+<p>文件本身放在<b>后端文件系统</b>里（比如 HDFS 或 S3 这类云存储），Foundry 只记住"逻辑路径 → 物理路径"的映射<a class="cite" href="https://www.palantir.com/docs/foundry/data-integration/datasets#backing-filesystem">[文档]</a>。包装这一层负责的是：权限、schema、版本历史。</p>
+<p>所以问题变成：<b>既然底下就是一堆文件，"现在数据集里有什么"是怎么定义的？</b>答案是事务。</p>
+
+<div class="quiz" data-answer="1" data-explain="文件在后端文件系统里，Foundry 只保存逻辑路径到物理路径的映射。">
+  <p>数据集的文件实际存在哪里？</p>
+  <ol>
+    <li>平台自带的关系数据库中</li>
+    <li>后端文件系统的目录下面</li>
+    <li>每个事务各自的压缩包里</li>
+    <li>计算引擎的内存缓存之中</li>
+  </ol>
+</div>
+
+<h2>2. 事务：数据集的"提交"</h2>
+<p>数据集里的文件只能通过<b>事务（Transaction）</b>改变。官方的类比是 Git：</p>
+<blockquote>"A transaction is analogous to a commit in Git: an atomic change…"
+<cite>— <a href="https://www.palantir.com/docs/foundry/data-integration/datasets#transactions">Palantir Docs · Transactions</a></cite></blockquote>
+<p>一个事务有三种状态<a class="cite" href="https://www.palantir.com/docs/foundry/data-integration/datasets#transactions">[文档]</a>：</p>
+<ul>
+  <li><b>OPEN</b>：正在往后端文件系统里写文件。</li>
+  <li><b>COMMITTED</b>：提交成功，写入的文件生效。</li>
+  <li><b>ABORTED</b>：放弃，期间写入的文件被<b>忽略</b>，就像没发生过。</li>
+</ul>
+
+<h3>四种事务类型</h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>类型</th><th>对视图做什么</th><th>Git 里的直觉</th></tr></thead>
+  <tbody>
+    <tr><td><span class="tx SNAPSHOT">SNAPSHOT</span></td><td>用一组全新文件<b>整体替换</b>当前视图</td><td>清空工作区后提交全部新文件</td></tr>
+    <tr><td><span class="tx APPEND">APPEND</span></td><td>只<b>加入</b>新文件，不碰已有文件</td><td>只新增文件的提交</td></tr>
+    <tr><td><span class="tx UPDATE">UPDATE</span></td><td>加入新文件，也可以<b>覆盖</b>已有文件的内容（A → A′）</td><td>既新增又修改的提交</td></tr>
+    <tr><td><span class="tx DELETE">DELETE</span></td><td>把文件<b>从视图里移除</b></td><td>删除文件的提交</td></tr>
+  </tbody>
+</table>
+</div>
+<p class="muted">定义逐条出自 <a href="https://www.palantir.com/docs/foundry/data-integration/datasets#transaction-types">Transaction types</a>。</p>
+
+<p>DELETE 有个容易踩的坑：它只是让文件<b>不再出现在视图里</b>，后端的物理文件还在。真正删除物理文件的是<b>保留策略（Retention）</b>，那是另一套机制，后面再讲<a class="cite" href="https://www.palantir.com/docs/foundry/data-integration/datasets#delete">[文档]</a>。</p>
+
+<div class="quiz" data-answer="2" data-explain="DELETE 只改变视图；物理文件要等保留策略来清理。">
+  <p>提交一个 DELETE 事务后，被删的文件会怎样？</p>
+  <ol>
+    <li>立即从后端存储里永久擦除</li>
+    <li>移入回收站，七天后可恢复</li>
+    <li>从视图移除，物理文件仍在</li>
+    <li>只标记删除，下次构建清理</li>
+  </ol>
+</div>
+
+<div class="quiz" data-answer="3" data-explain="ABORTED 事务里写的文件被忽略，不会进入视图。">
+  <p>一个事务最终是 ABORTED，它写入的文件会怎样？</p>
+  <ol>
+    <li>保留在视图里，等待重试</li>
+    <li>自动合并进下一个事务里</li>
+    <li>只在当前分支的视图中可见</li>
+    <li>被忽略，不进入任何视图</li>
+  </ol>
+</div>
+
+<h2>3. 视图：某一时刻"看得到"的文件</h2>
+<p>官方定义<a class="cite" href="https://www.palantir.com/docs/foundry/data-integration/datasets#dataset-views">[文档]</a>：视图（View）是数据集在<b>某个分支</b>、<b>某个时间点</b>上实际有效的文件内容。算法只有两步：</p>
+<ol>
+  <li>从该时间点之前<b>最近的一个 SNAPSHOT</b> 开始。</li>
+  <li>按顺序往后应用每个已提交的事务，跳过 ABORTED 的。</li>
+</ol>
+<p>为什么从最近的 SNAPSHOT 开始？因为 SNAPSHOT 会整体替换视图，它之前发生的一切都不再影响结果。</p>
+
+<h3>官方例子</h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>#</th><th>事务</th><th>之后的视图</th></tr></thead>
+  <tbody>
+    <tr><td>1</td><td><span class="tx SNAPSHOT">SNAPSHOT</span> 写入 A、B</td><td><span class="chip">A</span><span class="chip">B</span></td></tr>
+    <tr><td>2</td><td><span class="tx APPEND">APPEND</span> 加入 C</td><td><span class="chip">A</span><span class="chip">B</span><span class="chip">C</span></td></tr>
+    <tr><td>3</td><td><span class="tx UPDATE">UPDATE</span> 覆盖 A → A′</td><td><span class="chip">A'</span><span class="chip">B</span><span class="chip">C</span></td></tr>
+    <tr><td>4</td><td><span class="tx DELETE">DELETE</span> 移除 B</td><td><span class="chip">A'</span><span class="chip">C</span></td></tr>
+  </tbody>
+</table>
+</div>
+<p class="muted">出自 <a href="https://www.palantir.com/docs/foundry/data-integration/datasets#example-of-transaction-types">Example of transaction types</a>。如果之后再来一个只写入 D 的 SNAPSHOT，新视图就只有 D。</p>
+
+<div class="quiz" data-answer="0" data-explain="SNAPSHOT 整体替换视图，所以只需从该时间点前最近的那次 SNAPSHOT 开始回放。">
+  <p>计算某个时间点的视图，应该从哪个事务开始往后回放？</p>
+  <ol>
+    <li>最近一次整体替换的事务</li>
+    <li>时间点前最近的一个事务</li>
+    <li>最近一次覆盖文件的事务</li>
+    <li>数据集历史中第一个事务</li>
+  </ol>
+</div>
+<p id="quiz-score" class="muted"></p>
+
+<h2>4. 练习：预测视图</h2>
+<p>这是本课的核心练习。看事务历史，点选指定步骤之后视图里的文件，然后点"检查"。答错一次会给提示，第二次给出逐步回放。前 4 题是固定题，之后无限随机出题，建议至少连续做对 3 道随机题再结束。</p>
+<p class="muted">灰色的行发生在问题的时间点之后，不用管它们。A′ 在题目里写作 <code>A'</code>。</p>
+
+<div id="sim"></div>
+
+<h2>5. 收尾</h2>
+<div class="box goal">
+  <p><b>不看页面，回答这三个问题</b>（说出来或写在纸上，这比重读有效得多）：</p>
+  <ol>
+    <li>四种事务类型各对视图做什么？</li>
+    <li>为什么 DELETE 之后磁盘空间没有变少？</li>
+    <li>计算视图的两步算法是什么？</li>
+  </ol>
+  <p>下次开课前再回答一遍，间隔一两天效果最好。</p>
+</div>
+
+<div class="box source">
+  <p><b>推荐一手资料：</b><a href="https://www.palantir.com/docs/foundry/data-integration/datasets">Palantir Docs · Datasets（Core concepts）</a>。只读 <i>Transactions</i> 和 <i>Dataset views</i> 两节就够了，约 10 分钟。</p>
+  <p><b>速查：</b><a href="../reference/transactions.html">事务与视图速查表</a>，以后忘了就看这一页。</p>
+</div>
+
+<div class="box ask">
+  <p><b>有任何没想明白的地方，直接问我。</b>比如"UPDATE 和先 DELETE 再 APPEND 有什么区别？"或"视图为什么要绑定分支？"。我是你的老师，问题越具体越好。</p>
+</div>
+
+<nav class="nav">
+  <span class="muted">← 这是第一课</span>
+  <span class="muted">下一课：分支与 fallback 链（待生成）→</span>
+</nav>
+
+</main>
+<script src="../assets/quiz.js"></script>
+<script src="../assets/txn-sim.js"></script>
+<script>
+  TxnSim.mountPredict(document.getElementById("sim"), {
+    exercises: [
+      { // 官方例子
+        history: [
+          { type: "SNAPSHOT", files: ["A", "B"] },
+          { type: "APPEND", files: ["C"] },
+          { type: "UPDATE", files: ["A"] },
+          { type: "DELETE", files: ["B"] }
+        ], upto: 3 },
+      { // ABORTED 被忽略
+        history: [
+          { type: "SNAPSHOT", files: ["A", "B"] },
+          { type: "APPEND", files: ["C"], aborted: true },
+          { type: "UPDATE", files: ["B"] }
+        ], upto: 2 },
+      { // 问的是较早的时间点
+        history: [
+          { type: "SNAPSHOT", files: ["A", "B"] },
+          { type: "APPEND", files: ["C"] },
+          { type: "SNAPSHOT", files: ["D"] },
+          { type: "APPEND", files: ["E"] }
+        ], upto: 1 },
+      { // SNAPSHOT 让之前的一切失效
+        history: [
+          { type: "SNAPSHOT", files: ["A"] },
+          { type: "APPEND", files: ["B"] },
+          { type: "DELETE", files: ["A"] },
+          { type: "SNAPSHOT", files: ["C"] },
+          { type: "UPDATE", files: ["C"] },
+          { type: "APPEND", files: ["D"] }
+        ], upto: 5 }
+    ]
+  });
+</script>
+</body>
+</html>

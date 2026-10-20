@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>事务与视图速查</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<main>
+<p class="kicker">Foundry 数据集层 · 速查</p>
+<h1>事务与视图</h1>
+<p class="muted">来源：<a href="https://www.palantir.com/docs/foundry/data-integration/datasets">Palantir Docs · Datasets</a>（2026-10-20 核对）。配套课程：<a href="../lessons/0001-transactions-and-views.html">第 1 课</a>。</p>
+
+<h2>一句话</h2>
+<p><b>数据集</b> = 后端文件系统里一组文件的包装；文件只能通过<b>事务</b>改变；<b>视图</b> = 某分支、某时间点实际有效的文件。</p>
+
+<h2>事务状态</h2>
+<div class="table-wrap"><table>
+  <tr><th>OPEN</th><td>正在写文件</td></tr>
+  <tr><th>COMMITTED</th><td>写入的文件进入视图</td></tr>
+  <tr><th>ABORTED</th><td>写入的文件被忽略</td></tr>
+</table></div>
+
+<h2>事务类型</h2>
+<div class="table-wrap"><table>
+  <thead><tr><th>类型</th><th>加文件</th><th>改已有文件</th><th>移除文件</th><th>效果</th></tr></thead>
+  <tbody>
+  <tr><td><span class="tx SNAPSHOT">SNAPSHOT</span></td><td>✓</td><td>—</td><td>全部</td><td>整体替换视图</td></tr>
+  <tr><td><span class="tx APPEND">APPEND</span></td><td>✓</td><td>✗</td><td>✗</td><td>只加新文件</td></tr>
+  <tr><td><span class="tx UPDATE">UPDATE</span></td><td>✓</td><td>✓</td><td>✗</td><td>加文件，可覆盖 A → A′</td></tr>
+  <tr><td><span class="tx DELETE">DELETE</span></td><td>✗</td><td>✗</td><td>✓</td><td>从视图移除，物理文件仍在</td></tr>
+  </tbody>
+</table></div>
+
+<h2>视图算法</h2>
+<ol>
+  <li>找到该时间点之前最近的<b>已提交 SNAPSHOT</b>（没有就从第一个事务开始）。</li>
+  <li>按顺序应用之后每个<b>已提交</b>事务，跳过 ABORTED。</li>
+</ol>
+
+<h2>官方例子</h2>
+<p><span class="tx SNAPSHOT">SNAPSHOT</span> {A, B} → <span class="tx APPEND">APPEND</span> C → <span class="tx UPDATE">UPDATE</span> A→A′ → <span class="tx DELETE">DELETE</span> B ⇒ 视图 <span class="chip">A'</span><span class="chip">C</span></p>
+
+<h2>坑</h2>
+<ul>
+  <li>DELETE 不释放存储；物理删除靠保留策略（Retention）。</li>
+  <li>视图绑定<b>分支</b>和<b>时间点</b>，脱离这两者谈"数据集里有什么"没有意义。</li>
+  <li>Data Integration 里还有一个大写的 "View" 产品概念（读时 union 多个数据集），和这里的"数据集视图"不是一回事。</li>
+</ul>
+</main>
+</body>
+</html>
