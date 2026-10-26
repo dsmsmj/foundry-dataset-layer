@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>构建与新鲜度速查</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<main>
+<p class="kicker">Foundry 数据集层 · 速查</p>
+<h1>构建与新鲜度</h1>
+<p class="muted">来源：<a href="https://www.palantir.com/docs/foundry/data-integration/builds">Palantir Docs · Builds</a>（2026-10-26 核对）。配套课程：<a href="../lessons/0003-builds-and-staleness.html">第 3 课</a>。</p>
+
+<h2>名词</h2>
+<div class="table-wrap"><table>
+  <tr><th>Build</th><td>计算数据集新版本（在输出上提交新事务）的机制，由多个 Job 组成</td></tr>
+  <tr><th>Job</th><td>共享同一份逻辑的工作单元；多输出 Job 的输出总是一起更新</td></tr>
+  <tr><th>JobSpec</th><td>Job 的构造定义：输入（InputSpec）+ 逻辑；改转换逻辑时发布</td></tr>
+</table></div>
+
+<h2>生命周期</h2>
+<ol>
+  <li><b>解析</b>：查环 → 查输入存在与 schema → 在输出上开事务（build locking）→ 可能排队</li>
+  <li><b>执行</b>：Job 失败 → 直接依赖的 Job 与输出事务被终止；已完成的 Job 可能已写入输出</li>
+</ol>
+
+<h2>新鲜度</h2>
+<ul>
+  <li>输入数据集与 JobSpec 逻辑自上次构建以来都没变 → <b>fresh</b>，不重算。</li>
+  <li><b>force build</b>：全部重算，不看新鲜度。</li>
+  <li>推论：上游重算产出新事务 → 下游输入变了 → 下游也要重算。变化顺着依赖往下传。</li>
+</ul>
+
+<h2>Job 状态</h2>
+<p><code>WAITING</code> → <code>RUN_PENDING</code> → <code>RUNNING</code> → <code>COMPLETED</code> / <code>FAILED</code>；被终止时 <code>ABORT_PENDING</code> → <code>ABORTED</code>（用户取消，或依赖的 Job 失败）。</p>
+</main>
+</body>
+</html>

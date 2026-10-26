@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 3 课 · 构建与新鲜度</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<main>
+
+<p class="kicker">Foundry 数据集层 · 第 3 课 · 约 30 分钟</p>
+<h1>构建：什么时候重算，什么时候跳过</h1>
+<p class="lede">学完这一课，告诉你一条管道上次构建之后发生了什么变化，你能说出这次构建会重算哪些数据集、跳过哪些，以及为什么。</p>
+
+<div class="chain" aria-label="整条链路中本课的位置">
+  <span>文件</span><i>→</i><span>事务</span><i>→</i><span>视图</span><i>→</i>
+  <span>分支</span><i>→</i><span class="here">构建</span><i>→</i><span>质量检查</span><i>→</i><span>Ontology</span><i>→</i><span>权限</span>
+</div>
+
+<h2>0. 热身：输入和输出缺分支</h2>
+<p class="muted">上一课最容易混的地方。记住那句话：<b>输入往后退着读，输出往前建着写。</b></p>
+<div class="quiz" data-answer="2" data-explain="输入沿 fallback 链往后退，读第一个存在的分支；构建从不在输入上建分支。">
+  <p>在 feature 分支上构建，fallback 链是 feature → master。输入 raw_orders 只有 master 分支。会怎样？</p>
+  <ol>
+    <li>新建分支，然后再读取</li>
+    <li>直接报错，解析会失败</li>
+    <li>读主分支，不新建分支</li>
+    <li>作为根分支，从头构建</li>
+  </ol>
+</div>
+<div class="quiz" data-answer="3" data-explain="输出的事务总在构建分支上；分支不存在时，从 fallback 链的第一个分支创建。只有没有 fallback 时才建根分支。">
+  <p>同一次构建，输出 clean_orders 也没有 feature 分支，只有 master。会怎样？</p>
+  <ol>
+    <li>作为全新的根分支创建</li>
+    <li>构建失败，提示无分支</li>
+    <li>改写到主分支上的输出</li>
+    <li>从第一个后备分支创建</li>
+  </ol>
+</div>
+
+<h2>1. 构建、Job 与 JobSpec</h2>
+<blockquote>"A Build is the mechanism used to compute new versions of datasets in Foundry."
+<cite>— <a href="https://www.palantir.com/docs/foundry/data-integration/builds">Palantir Docs · Builds</a></cite></blockquote>
+<p>"新版本"用第 1 课的话说，就是在输出数据集上提交一条<b>新事务</b>。一次构建由若干 <b>Job</b> 组成，每个 Job 是一份共享逻辑的工作单元<a class="cite" href="https://www.palantir.com/docs/foundry/data-integration/builds">[文档]</a>。</p>
+<ul>
+  <li><b>JobSpec</b>：一个 Job 该怎么构造的定义：读哪些输入（每个输入写成一条 InputSpec）、用什么逻辑算。修改转换逻辑时会发布新的 JobSpec<a class="cite" href="https://www.palantir.com/docs/foundry/data-integration/builds">[文档]</a>。上一课的 fallback 链，解析的就是它。</li>
+  <li><b>多输出 Job</b>：一个 Job 有多个输出时，这些输出<b>总是一起更新</b>，不能只构建其中一个<a class="cite" href="https://www.palantir.com/docs/foundry/data-integration/builds">[文档]</a>。</li>
+</ul>
+
+<h2>2. 一次构建的两个阶段</h2>
+<h3>解析（resolution）：先把账算清</h3>
+<ol>
+  <li>检查依赖里有没有环，有就直接失败。</li>
+  <li>检查输入都存在，并确定每个输入的 schema。</li>
+  <li>在每个输出上<b>先开一条事务</b>，确保只有这次构建能写它。官方叫 build locking。</li>
+  <li>如果另一个正在跑的构建会改动它的输入，这次构建可能排队等它结束。</li>
+</ol>
+<p class="muted">四条都出自 <a href="https://www.palantir.com/docs/foundry/data-integration/builds">Build lifecycle</a>。</p>
+<p>第 3 步和第 1 课直接相连：输出上的事务这时是 <b>OPEN</b>，Job 成功就 COMMITTED，失败就 ABORTED，写进去的文件被忽略。</p>
+
+<div class="quiz" data-answer="2" data-explain="build locking：先在输出上开事务，这样只有当前这次构建能往输出里写。">
+  <p>解析阶段为什么要先在每个输出上开一条事务？</p>
+  <ol>
+    <li>先占位，方便计算行数</li>
+    <li>让下游马上读到新数据</li>
+    <li>保证只有本次构建能写</li>
+    <li>记录这次构建的发起人</li>
+  </ol>
+</div>
+
+<h3>执行（execution）：有 Job 失败时</h3>
+<p>某个 Job 失败，直接依赖它的 Job 和输出上的事务会被终止。但要注意：<b>已经完成的 Job 可能已经把数据写进了它们的输出</b><a class="cite" href="https://www.palantir.com/docs/foundry/data-integration/builds">[文档]</a>。一次构建不是"要么全成、要么全不成"。</p>
+
+<div class="quiz" data-answer="1" data-explain="构建不是整体原子的：失败前已完成的 Job 可能已经写入了输出。">
+  <p>构建中 order_facts 的 Job 失败了。在它之前已经完成的 clean_orders 呢？</p>
+  <ol>
+    <li>全部自动回滚到构建前</li>
+    <li>已写入的数据可能保留</li>
+    <li>也一起被标记为失败了</li>
+    <li>要等重试成功后才提交</li>
+  </ol>
+</div>
+
+<h2>3. 新鲜度：为什么会跳过</h2>
+<p>这是本课的核心。官方规则<a class="cite" href="https://www.palantir.com/docs/foundry/data-integration/builds">[文档 · Staleness]</a>：</p>
+<div class="box goal">
+  <p>如果一个输出的<b>输入数据集</b>和 <b>JobSpec 逻辑</b>自上次构建以来都没变，它就是<b>新鲜的（fresh）</b>，之后的构建不会重算它。</p>
+  <p><b>force build</b> 例外：不管新不新鲜，全部重算。</p>
+</div>
+<p>把它和前两课连起来，就能推出一条很有用的结论：上游一旦被重算，就会提交一条新事务，它的视图变了；对下游来说，这就是"输入变了"，于是下游也不新鲜了。<b>变化会顺着依赖往下游传。</b></p>
+<p class="muted">"输入变了"在这里理解为输入有了新的已提交事务。这是从规则推出的理解，文档原文只说输入数据集没有变化。</p>
+
+<div class="quiz" data-answer="3" data-explain="输入和 JobSpec 都没变，所有输出都是新鲜的，构建什么都不重算。">
+  <p>刚构建完，什么都没改，马上再点一次构建，会怎样？</p>
+  <ol>
+    <li>全部重算一遍再提交</li>
+    <li>报错提示没有新数据</li>
+    <li>只重算最下游的数据</li>
+    <li>输出新鲜，直接跳过</li>
+  </ol>
+</div>
+<p id="quiz-score" class="muted"></p>
+
+<h2>4. 练习：这次会重算谁</h2>
+<p>下面是一条管道。左边虚线框是同步进来的原始数据集，本次不构建。每题告诉你上次构建之后发生了什么，你点选这次会被重算的数据集，再点"检查"。答错一次给提示，第二次给出每个数据集的理由。前 5 题固定，之后随机。建议连续答对 3 道随机题再结束。</p>
+<div id="bdsim"></div>
+
+<h2>5. 收尾</h2>
+<div class="box goal">
+  <p><b>不看页面，回答这三个问题：</b></p>
+  <ol>
+    <li>一个输出在什么条件下算"新鲜"？新鲜的输出会怎样？</li>
+    <li>只改了最上游一个转换的代码，为什么下游好几个数据集都会被重算？</li>
+    <li>构建中途一个 Job 失败了，为什么有些输出可能已经有了新数据？</li>
+  </ol>
+  <p>下次开课前再答一遍。</p>
+</div>
+
+<div class="box source">
+  <p><b>推荐一手资料：</b><a href="https://www.palantir.com/docs/foundry/data-integration/builds">Palantir Docs · Builds</a>。读 <i>Jobs and JobSpecs</i> 和 <i>Build lifecycle</i> 两节，约 10 分钟。</p>
+  <p><b>速查：</b><a href="../reference/builds.html">构建与新鲜度速查表</a> · <a href="../reference/branches.html">分支速查</a> · <a href="../reference/transactions.html">事务速查</a></p>
+</div>
+
+<div class="box ask">
+  <p><b>有任何没想明白的地方，直接问我。</b>比如"同步原始数据算不算构建？"或"上游重算后数据其实没变，下游还会重算吗？"。</p>
+</div>
+
+<nav class="nav">
+  <a href="0002-branches-and-fallback.html">← 第 2 课：分支与 fallback 链</a>
+  <span class="muted">下一课：增量与快照（待生成）→</span>
+</nav>
+
+</main>
+<script src="../assets/quiz.js"></script>
+<script src="../assets/build-sim.js"></script>
+<script>
+  const pipeline = {
+    nodes: [
+      { id: "raw_orders", x: 0, y: 10, raw: true },
+      { id: "raw_customers", x: 0, y: 120, raw: true },
+      { id: "clean_orders", x: 190, y: 10, inputs: ["raw_orders"] },
+      { id: "clean_customers", x: 190, y: 120, inputs: ["raw_customers"] },
+      { id: "order_facts", x: 380, y: 65, inputs: ["clean_orders", "clean_customers"] },
+      { id: "daily_report", x: 570, y: 10, inputs: ["order_facts"] },
+      { id: "customer_report", x: 570, y: 120, inputs: ["clean_customers"] }
+    ]
+  };
+  BuildSim.mountStaleness(document.getElementById("bdsim"), {
+    pipeline,
+    scenarios: [
+      { tx: ["raw_orders"] },
+      { code: ["customer_report"] },
+      {},
+      { tx: ["raw_customers"], code: ["daily_report"] },
+      { force: true }
+    ]
+  });
+</script>
+</body>
+</html>
