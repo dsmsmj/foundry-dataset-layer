@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>分支与 fallback 速查</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<main>
+<p class="kicker">Foundry 数据集层 · 速查</p>
+<h1>分支与 fallback 链</h1>
+<p class="muted">来源：<a href="https://www.palantir.com/docs/foundry/data-integration/branching">Palantir Docs · Branching</a>（2026-10-26 核对）。配套课程：<a href="../lessons/0002-branches-and-fallback.html">第 2 课</a>。</p>
+
+<h2>分支</h2>
+<ul>
+  <li>分支 = 指向该分支最新事务的<b>指针</b>，不存数据。</li>
+  <li>非根分支有且只有一个父分支；子分支可从分支或<b>任意事务</b>创建。</li>
+  <li>删除分支只删指针，事务保留；子分支改挂到父分支下。</li>
+  <li><b>不能合并</b>数据集分支。合并代码，再在目标分支上重新构建。</li>
+  <li>同一分支内事务按开始/提交时间有序；跨分支没有顺序保证。</li>
+</ul>
+
+<h2>构建时的解析规则</h2>
+<p>构建分支 + fallback 链，例如 <code>feature → develop → master</code>。</p>
+<div class="table-wrap"><table>
+  <thead><tr><th>对象</th><th>规则</th></tr></thead>
+  <tbody>
+  <tr><td>JobSpec</td><td>构建分支 → 否则链上第一个发布了 JobSpec 的分支</td></tr>
+  <tr><td>输入</td><td>构建分支 → 否则链上第一个存在的分支</td></tr>
+  <tr><td>输出</td><td>事务总在构建分支；分支不存在则从链上第一个 fallback 创建，无 fallback 则建根分支</td></tr>
+  </tbody>
+</table></div>
+
+<h2>保证</h2>
+<ul>
+  <li>构建只改构建分支。</li>
+  <li>构建不会在输入数据集上创建分支。</li>
+  <li>fallback 链必须和相关数据集的分支祖先关系兼容，否则解析失败。</li>
+</ul>
+</main>
+</body>
+</html>

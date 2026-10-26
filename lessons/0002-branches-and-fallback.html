@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 2 课 · 分支与 fallback 链</title>
+<link rel="stylesheet" href="../assets/style.css">
+<style>
+  .branch-svg { width: 100%; max-width: 40rem; height: auto; display: block; margin: 1rem 0; }
+  .branch-svg .line { stroke: var(--rule); stroke-width: 3; fill: none; }
+  .branch-svg .node { fill: var(--bg); stroke: var(--fg); stroke-width: 2; }
+  .branch-svg .node.dev { stroke: var(--accent); }
+  .branch-svg .lineDev { stroke: var(--accent); stroke-width: 3; fill: none; opacity: 0.6; }
+  .branch-svg text { fill: var(--fg); font-family: var(--mono); font-size: 13px; }
+  .branch-svg .label { font-family: var(--sans); font-size: 13px; fill: var(--muted); }
+  .branch-svg .ptr { fill: var(--accent); font-family: var(--sans); font-size: 13px; font-weight: 600; }
+  .branch-svg .ptrM { fill: var(--fg); font-family: var(--sans); font-size: 13px; font-weight: 600; }
+</style>
+</head>
+<body>
+<main>
+
+<p class="kicker">Foundry 数据集层 · 第 2 课 · 约 30 分钟</p>
+<h1>分支与 fallback 链</h1>
+<p class="lede">学完这一课，给你一次构建的分支和 fallback 链，你能说出每个输入读哪个分支、输出写到哪个分支、逻辑（JobSpec）取自哪个分支。</p>
+
+<div class="chain" aria-label="整条链路中本课的位置">
+  <span>文件</span><i>→</i><span>事务</span><i>→</i><span>视图</span><i>→</i>
+  <span class="here">分支</span><i>→</i><span>构建</span><i>→</i><span>质量检查</span><i>→</i><span>Ontology</span><i>→</i><span>权限</span>
+</div>
+
+<h2>0. 热身：先回忆上一课</h2>
+<p class="muted">不翻第 1 课，直接答。隔几天再回忆，记得最牢。</p>
+<div class="quiz" data-answer="0" data-explain="DELETE 本身是一条新事务，作用是把文件从视图移除。历史里的事务一条都不少，物理文件也还在。">
+  <p>提交一个 DELETE 事务之后，下面哪个说法对？</p>
+  <ol>
+    <li>历史里多了一条新事务</li>
+    <li>历史里被删掉一条事务</li>
+    <li>物理文件被立刻擦除了</li>
+    <li>视图回退到上一个快照</li>
+  </ol>
+</div>
+<p>记住这一层区分：<b>事务</b>是历史记录，只增不减；<b>文件</b>是事务写进去的东西；<b>视图</b>是按事务回放出来的结果。这一课里还会用到它。</p>
+
+<h2>1. 分支就是一个指针</h2>
+<p>第 1 课说过，视图是数据集在"某个分支、某个时间点"上的文件集合。现在来看"分支"是什么。</p>
+<blockquote>"…dataset branches are simply a pointer to the most recent transaction on that branch."
+<cite>— <a href="https://www.palantir.com/docs/foundry/data-integration/branching">Palantir Docs · Branching</a></cite></blockquote>
+<p>和 Git 一样：分支本身不存数据，只是指向这条线上<b>最新的那个事务</b>。每个分支都有一个父分支，只有根分支（通常叫 <code>master</code>）没有<a class="cite" href="https://www.palantir.com/docs/foundry/data-integration/branching">[文档]</a>。子分支可以从另一个分支创建，也可以从<b>任意一个事务</b>创建。</p>
+
+<svg class="branch-svg" viewBox="0 0 560 145" role="img" aria-label="master 分支有 T1、T2、T3 三个事务；develop 分支从 T2 分出，有事务 T4">
+  <path class="line" d="M60 50 H420"/>
+  <path class="lineDev" d="M200 50 C 240 50, 250 120, 300 120 H 360"/>
+  <circle class="node" cx="60" cy="50" r="16"/><text x="51" y="55">T1</text>
+  <circle class="node" cx="200" cy="50" r="16"/><text x="191" y="55">T2</text>
+  <circle class="node" cx="360" cy="50" r="16"/><text x="351" y="55">T3</text>
+  <circle class="node dev" cx="360" cy="120" r="16"/><text x="351" y="125">T4</text>
+  <text class="ptrM" x="390" y="55">← master</text>
+  <text class="ptr" x="390" y="125">← develop</text>
+</svg>
+<p class="muted">develop 从 T2 分出。develop 上的视图回放 T1 → T2 → T4；master 上的视图回放 T1 → T2 → T3。</p>
+
+<p>所以同一个数据集，在不同分支上可以有不同的视图。在 develop 上随便折腾，master 的视图不受影响。</p>
+
+<h3>删除分支</h3>
+<p>删除一个分支，删掉的只是<b>指针</b>，分支上的事务一条都不会删；如果它有子分支，子分支会改挂到它的父分支下面<a class="cite" href="https://www.palantir.com/docs/foundry/data-integration/branching">[文档]</a>。和上面的热身题是同一个道理：事务只增不减。</p>
+
+<div class="quiz" data-answer="2" data-explain="分支只是指针，删除分支只删指针；事务保留，子分支改挂到父分支下。">
+  <p>删除一个数据集分支后会发生什么？</p>
+  <ol>
+    <li>指针和事务都被一起删除</li>
+    <li>事务并入父分支后再删除</li>
+    <li>只删指针，事务仍然保留</li>
+    <li>子分支也会被级联删除掉</li>
+  </ol>
+</div>
+
+<h3>和 Git 最大的不同：不能合并</h3>
+<blockquote>"Unlike Git, there is no support for merging dataset branches."
+<cite>— <a href="https://www.palantir.com/docs/foundry/data-integration/branching">Palantir Docs · Branching</a></cite></blockquote>
+<p>那在 develop 上验证好的东西怎么进 master？合并的是<b>代码</b>，不是数据：把代码仓库里的转换逻辑合进 master，再在 master 上重新构建，产出 master 自己的事务<a class="cite" href="../research/foundry-dataset-layer.md">[调研笔记 §3]</a>。</p>
+
+<div class="quiz" data-answer="1" data-explain="数据集分支不能合并；合并的是代码，然后在主分支上重新构建。">
+  <p>develop 分支上验证好的结果，怎样进入 master？</p>
+  <ol>
+    <li>把数据分支合并进主分支</li>
+    <li>合并代码后在主分支重建</li>
+    <li>把事务复制粘贴到主分支</li>
+    <li>主分支自动同步开发分支</li>
+  </ol>
+</div>
+
+<h2>2. 构建时的 fallback 链</h2>
+<p>新开一个 feature 分支时，大部分数据集上<b>还没有</b>这个分支。那在 feature 上跑构建，输入读什么？逻辑用哪份？答案是 <b>fallback 链</b>：构建时指定一串分支，比如 <code>feature → develop → master</code>，找不到就往后退<a class="cite" href="https://www.palantir.com/docs/foundry/data-integration/branching">[文档]</a>。</p>
+<p>这里先认识一个新词：<b>JobSpec</b> 是"某个输出怎么算出来"的说明，包括它的输入和转换逻辑。在代码仓库的某个分支上提交代码，会把 JobSpec 发布到同名分支上<a class="cite" href="../research/foundry-dataset-layer.md">[调研笔记 §3、§5]</a>。下一课讲构建时会细说。</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>要解析的东西</th><th>规则</th></tr></thead>
+  <tbody>
+    <tr><td><b>JobSpec</b></td><td>构建分支上有就用；没有就沿 fallback 链找第一个发布了 JobSpec 的分支</td></tr>
+    <tr><td><b>输入</b></td><td>构建分支上有就读；没有就读 fallback 链里<b>第一个存在</b>的分支</td></tr>
+    <tr><td><b>输出</b></td><td>新事务<b>总是</b>开在构建分支上。分支不存在时，从 fallback 链的第一个分支创建；没有 fallback 就作为根分支创建</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>再加两条保证，原文都很短<a class="cite" href="https://www.palantir.com/docs/foundry/data-integration/branching">[文档]</a>：</p>
+<ul>
+  <li>构建<b>只改构建分支</b>，绝不动其他分支。</li>
+  <li>构建<b>不会在输入数据集上创建分支</b>。输入缺分支就往后退着读，不会替它建一个。</li>
+</ul>
+<p>这两条保证就是分支有用的原因：你在 feature 上怎么构建，master 上的数据都安然无恙。</p>
+
+<h2>3. 练习：解析一次构建</h2>
+<p>每题给出一次构建的分支、fallback 链，以及每个数据集上有哪些分支、JobSpec 发布在哪些分支上。逐个回答下面的问题，点击即判分。前 3 题固定，之后随机。建议连续答对 2 道随机题的全部小问再结束。</p>
+<div id="bsim"></div>
+
+<h2>4. 收尾</h2>
+<div class="box goal">
+  <p><b>不看页面，回答这三个问题：</b></p>
+  <ol>
+    <li>数据集分支本质上是什么？删除它会丢数据吗？</li>
+    <li>在 feature 分支上构建，某个输入没有 feature 分支，会读哪里？会不会给它建一个 feature 分支？</li>
+    <li>为什么说 feature 上的构建不会弄坏 master 的数据？</li>
+  </ol>
+  <p>下次开课前再答一遍。</p>
+</div>
+
+<div class="box source">
+  <p><b>推荐一手资料：</b><a href="https://www.palantir.com/docs/foundry/data-integration/branching">Palantir Docs · Branching</a>。读 <i>Dataset branches</i>、<i>Branches in builds</i> 和 <i>Example: Building on branches</i> 三节，约 10 分钟。</p>
+  <p><b>速查：</b><a href="../reference/branches.html">分支与 fallback 速查表</a> · <a href="../reference/transactions.html">事务与视图速查表</a></p>
+</div>
+
+<div class="box ask">
+  <p><b>有任何没想明白的地方，直接问我。</b>比如"develop 从 T2 分出之后，master 上再提交 T3，develop 能看到吗？"或"两个人同时在一个分支上构建会怎样？"。</p>
+</div>
+
+<nav class="nav">
+  <a href="0001-transactions-and-views.html">← 第 1 课：事务与视图</a>
+  <span class="muted">下一课：构建、JobSpec 与新鲜度（待生成）→</span>
+</nav>
+
+</main>
+<script src="../assets/quiz.js"></script>
+<script src="../assets/branch-sim.js"></script>
+<script>
+  BranchSim.mountFallback(document.getElementById("bsim"), {
+    exercises: [
+      { // 输入缺分支要往后退；输出在构建分支上已存在
+        chain: ["develop", "master"],
+        datasets: [
+          { name: "raw_orders", role: "input", branches: ["master"] },
+          { name: "ref_regions", role: "input", branches: ["develop", "master"] },
+          { name: "clean_orders", role: "output", branches: ["develop", "master"], jobspec: ["develop", "master"] }
+        ] },
+      { // 三段链；JobSpec 只在 master；输出需要新建 feature 分支
+        chain: ["feature", "develop", "master"],
+        datasets: [
+          { name: "raw_events", role: "input", branches: ["develop", "master"] },
+          { name: "raw_customers", role: "input", branches: ["master"] },
+          { name: "customer_360", role: "output", branches: ["develop", "master"], jobspec: ["master"] }
+        ] },
+      { // 没有 fallback：全新输出作为根分支创建
+        chain: ["master"],
+        datasets: [
+          { name: "raw_payments", role: "input", branches: ["master"] },
+          { name: "daily_kpis", role: "output", branches: [], jobspec: ["master"] }
+        ] }
+    ]
+  });
+</script>
+</body>
+</html>
