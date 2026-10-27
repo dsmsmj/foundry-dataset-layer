@@ -29,3 +29,13 @@ _Avoid_：定点更新（它也能加新文件）
 **分支（Branch）**：
 指向某条线上最新事务的指针，本身不存数据；删除分支只删指针，事务保留。数据集分支不能合并。
 _Avoid_：数据副本、环境
+
+## 质量检查
+
+**Data Expectation**：
+写在 transform 代码里、挂在输入（pre-condition）或输出（post-condition）上的检查，在构建 Job 运行期间执行；FAIL（默认）中止 Job，WARN 放行并告警。
+_Avoid_：上游检查、schema 校验（它能检查的不止 schema）
+
+**Data Health 检查**：
+配置在数据集或调度上的监控，多数在 Job 结束后计算，只告警、不拦数据。
+_Avoid_：数据校验（容易和 Expectation 混）

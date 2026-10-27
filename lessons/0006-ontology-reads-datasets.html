@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 6 课 · 数据集到对象</title>
+<link rel="stylesheet" href="../assets/style.css">
+<style>
+  .flow { display: grid; grid-template-columns: 1fr auto 1fr auto 1fr; gap: 0.5rem; align-items: center; margin: 1.2rem 0; font-size: 0.92rem; }
+  .flow div.st { border: 1px solid var(--rule); border-radius: 6px; padding: 0.6rem; text-align: center; }
+  .flow div.st b { display: block; font-family: var(--serif); }
+  .flow .ar { color: var(--muted); }
+  .flow .mid { border-color: var(--accent); }
+  @media (max-width: 560px) { .flow { grid-template-columns: 1fr; } .flow .ar { text-align: center; transform: rotate(90deg); } }
+</style>
+</head>
+<body>
+<main>
+
+<p class="kicker">Foundry 数据集层 · 第 6 课 · 短课 · 约 15～20 分钟</p>
+<h1>Ontology 不直接读数据集</h1>
+<p class="lede">这一课只讲一个点：对象（Object）的数据来自数据集，但中间隔着一个索引服务 Funnel。学完你能判断数据集发生某个变化时，对象那边会怎样。</p>
+
+<div class="chain" aria-label="整条链路中本课的位置">
+  <span>文件</span><i>→</i><span>事务</span><i>→</i><span>视图</span><i>→</i>
+  <span>分支</span><i>→</i><span>构建</span><i>→</i><span>质量检查</span><i>→</i><span class="here">Ontology</span><i>→</i><span>权限</span>
+</div>
+
+<h2>0. 回忆热身（约 5 分钟）</h2>
+<div class="quiz" data-answer="0" data-explain="FAIL 中止 Job → 它在输出上开的事务被放弃（ABORTED）→ ABORTED 事务写的文件不进视图。三课的规则连起来就是答案。">
+  <p>为什么 Expectation 的 FAIL 能让坏数据进不了视图？</p>
+  <ol>
+    <li>输出事务被放弃，文件不进视图</li>
+    <li>坏数据被自动回滚到上一个版本</li>
+    <li>检查器会直接删除掉那些坏文件</li>
+    <li>报警器通知人去手工撤回数据了</li>
+  </ol>
+</div>
+<div class="quiz" data-answer="2" data-explain="增量运行时输出默认 modify：追加到已有输出上。快照运行才是 replace 整体替换。">
+  <p>增量 transform 增量运行时，输出默认怎么写？</p>
+  <ol>
+    <li>整体替换整个输出</li>
+    <li>写到一个新数据集</li>
+    <li>追加到已有输出上</li>
+    <li>只更新被改的那行</li>
+  </ol>
+</div>
+<div class="quiz" data-answer="1" data-explain="分支只是指针；删除分支只删指针，事务全部保留。">
+  <p>删除一个数据集分支，分支上的事务会怎样？</p>
+  <ol>
+    <li>随着分支一起被删除</li>
+    <li>全部保留，只删指针</li>
+    <li>合并进父分支历史里</li>
+    <li>等待保留策略来清理</li>
+  </ol>
+</div>
+
+<h2>1. 唯一的知识点（约 5 分钟）</h2>
+<p>Ontology 把数据变成业务"对象"：一个订单、一台设备、一位客户。应用里查对象、改对象，都在对象这一层。但对象的数据从哪来？</p>
+<blockquote>"Funnel reads data from Foundry datasources (such as datasets, restricted views, and streaming datasources)…"
+<cite>— <a href="https://www.palantir.com/docs/foundry/object-backend/overview">Palantir Docs · Ontology architecture</a></cite></blockquote>
+<p>Funnel 把这些数据<b>索引进对象数据库</b>，并在数据源更新时让索引保持最新<a class="cite" href="https://www.palantir.com/docs/foundry/object-backend/overview">[文档]</a>。新一代的 Object Storage V2 默认对所有对象类型做<b>增量索引</b><a class="cite" href="https://www.palantir.com/docs/foundry/object-backend/overview">[文档]</a>。</p>
+
+<div class="flow" aria-label="数据流">
+  <div class="st"><b>数据集</b>已提交的事务、视图<br><span class="muted">第 1～5 课</span></div>
+  <div class="ar">→</div>
+  <div class="st mid"><b>Funnel</b>读取、索引<br><span class="muted">保持最新</span></div>
+  <div class="ar">→</div>
+  <div class="st"><b>对象数据库</b>应用查询、编辑<br><span class="muted">Ontology</span></div>
+</div>
+
+<p>比喻：数据集是<b>仓库里的书</b>，对象数据库是<b>检索目录</b>，Funnel 是<b>编目员</b>。新书入库，编目员把它登记进目录；读者查的是目录，不是直接去翻仓库。</p>
+
+<p>由此有三个要点：</p>
+<ul>
+  <li><b>对象跟着已提交的数据走。</b>只有提交了新事务，才有新东西可索引。构建失败、事务被放弃，对象就不变。<span class="muted">（由第 1、5 课推出）</span></li>
+  <li><b>用户编辑落在对象层。</b>Actions 服务负责把用户编辑应用到对象数据库<a class="cite" href="https://www.palantir.com/docs/foundry/object-backend/overview">[文档]</a>，而不是在支撑数据集上提交事务。<span class="muted">（"不在数据集上提交事务"是推论）</span></li>
+  <li><b>回滚数据集要额外处理。</b>如果数据集支撑的是 Object Storage V2 上的对象类型，回滚后"manual intervention is required"<a class="cite" href="https://www.palantir.com/docs/foundry/data-lineage/dataset-rollback">[文档]</a>。目录不会自己知道仓库倒回了过去。</li>
+</ul>
+
+<h2>2. 判断练习（约 5 分钟）</h2>
+<p>每题描述支撑某个对象类型的数据集发生了什么，判断对象那边会怎样。四个选项每题都一样。</p>
+<p id="quiz-score" class="muted"></p>
+
+<div class="quiz" data-answer="0" data-explain="新事务已提交，Funnel 让索引保持最新，OSv2 默认增量索引。">
+  <p>支撑数据集刚提交了一条 APPEND，加了 500 个新订单。</p>
+  <ol><li>索引服务自动跟着更新对象</li><li>编辑直接写进对象数据库中</li><li>需要人工介入才能保持一致</li><li>对象不变，因为没有新事务</li></ol>
+</div>
+<div class="quiz" data-answer="3" data-explain="Expectation FAIL：Job 中止，输出事务被放弃，没有新的已提交数据，对象不变。">
+  <p>支撑数据集的构建里，主键 Expectation 失败了（FAIL）。</p>
+  <ol><li>索引服务自动跟着更新对象</li><li>编辑直接写进对象数据库中</li><li>需要人工介入才能保持一致</li><li>对象不变，因为没有新事务</li></ol>
+</div>
+<div class="quiz" data-answer="1" data-explain="Actions 服务把用户编辑应用到对象数据库。">
+  <p>业务人员在应用里通过一个 Action，把某个订单的状态改成"已发货"。</p>
+  <ol><li>索引服务自动跟着更新对象</li><li>编辑直接写进对象数据库中</li><li>需要人工介入才能保持一致</li><li>对象不变，因为没有新事务</li></ol>
+</div>
+<div class="quiz" data-answer="2" data-explain="支撑 OSv2 对象类型的数据集回滚后，需要人工介入。">
+  <p>有人把支撑数据集回滚到了三天前的一个事务。对象类型存在 Object Storage V2 上。</p>
+  <ol><li>索引服务自动跟着更新对象</li><li>编辑直接写进对象数据库中</li><li>需要人工介入才能保持一致</li><li>对象不变，因为没有新事务</li></ol>
+</div>
+<div class="quiz" data-answer="0" data-explain="Data Health 只告警不拦数据：数据已经提交，Funnel 照常索引。坏数据会进到对象里。">
+  <p>支撑数据集构建成功并提交了，但 Data Health 的行数检查报警：行数暴跌一半。</p>
+  <ol><li>索引服务自动跟着更新对象</li><li>编辑直接写进对象数据库中</li><li>需要人工介入才能保持一致</li><li>对象不变，因为没有新事务</li></ol>
+</div>
+<div class="quiz" data-answer="3" data-explain="输入和代码都没变，构建跳过，没有新事务，Funnel 也就没有新东西可索引。">
+  <p>上游什么都没变，调度触发了一次构建，支撑数据集是新鲜的。</p>
+  <ol><li>索引服务自动跟着更新对象</li><li>编辑直接写进对象数据库中</li><li>需要人工介入才能保持一致</li><li>对象不变，因为没有新事务</li></ol>
+</div>
+
+<h2>3. 收尾（约 2 分钟）</h2>
+<div class="box goal">
+  <p><b>不看页面，用一句话各答一题：</b></p>
+  <ol>
+    <li>对象的数据是怎么从数据集来的？中间是谁？</li>
+    <li>为什么 Expectation FAIL 能保护对象，而 Data Health 报警保护不了？</li>
+    <li>数据集回滚后，对象那边要注意什么？</li>
+  </ol>
+</div>
+
+<div class="box source">
+  <p><b>推荐一手资料：</b><a href="https://www.palantir.com/docs/foundry/object-backend/overview">Palantir Docs · Ontology architecture</a>，读 <i>Object Data Funnel</i> 和 <i>Object Storage v2 architecture</i> 两小节，约 5 分钟。</p>
+  <p><b>速查：</b><a href="../reference/ontology.html">数据集到对象速查表</a></p>
+</div>
+
+<div class="box ask">
+  <p><b>有任何没想明白的地方，直接问我。</b>比如"用户编辑和数据集里的新数据冲突了听谁的？"——这一点文档这页没讲，我们可以一起去查。</p>
+</div>
+
+<nav class="nav">
+  <a href="0005-expectations-vs-health-checks.html">← 第 5 课：质量检查</a>
+  <span class="muted">下一课：权限：项目角色与 Markings（待生成）→</span>
+</nav>
+
+</main>
+<script src="../assets/quiz.js"></script>
+</body>
+</html>

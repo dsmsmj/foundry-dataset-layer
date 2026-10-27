@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>数据集到对象速查</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<main>
+<p class="kicker">Foundry 数据集层 · 速查</p>
+<h1>数据集到对象</h1>
+<p class="muted">来源：<a href="https://www.palantir.com/docs/foundry/object-backend/overview">Ontology architecture</a>、<a href="https://www.palantir.com/docs/foundry/data-lineage/dataset-rollback">Roll back a dataset</a>（2026-10-27 核对）。配套课程：<a href="../lessons/0006-ontology-reads-datasets.html">第 6 课</a>。</p>
+
+<p><b>数据集</b>（已提交的数据）→ <b>Funnel</b>（读取、索引、保持最新）→ <b>对象数据库</b>（应用查询与编辑）</p>
+
+<div class="table-wrap"><table>
+  <thead><tr><th>数据集上发生了</th><th>对象那边</th></tr></thead>
+  <tbody>
+  <tr><td>提交了新事务</td><td>Funnel 跟着更新索引（OSv2 默认增量索引）</td></tr>
+  <tr><td>构建失败 / 事务被放弃 / 新鲜跳过</td><td>不变：没有新的已提交数据（推论）</td></tr>
+  <tr><td>Data Health 报警但数据已提交</td><td>照常索引，坏数据会进对象</td></tr>
+  <tr><td>回滚（OSv2）</td><td>需要人工介入</td></tr>
+  <tr><td>用户在应用里用 Action 编辑</td><td>Actions 服务把编辑应用到对象数据库</td></tr>
+  </tbody>
+</table></div>
+
+<h2>比喻</h2>
+<p>仓库里的书（数据集）→ 编目员（Funnel）→ 检索目录（对象数据库）。读者查目录，不直接翻仓库。</p>
+</main>
+</body>
+</html>
