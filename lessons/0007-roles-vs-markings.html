@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 7 课 · 角色与标记</title>
+<link rel="stylesheet" href="../assets/style.css">
+<style>
+  .setup { display: grid; grid-template-columns: 1fr auto 1fr; gap: 0.6rem; align-items: center; margin: 1rem 0; font-size: 0.92rem; }
+  .setup .pj { border: 1px dashed var(--rule); border-radius: 6px; padding: 0.6rem; }
+  .setup .pj b { font-family: var(--serif); }
+  .setup .ds { display: inline-block; margin-top: 0.3rem; font-family: var(--mono); border: 1px solid var(--fg); border-radius: 4px; padding: 0.1rem 0.5rem; }
+  .setup .mk { color: var(--accent); font-size: 0.8rem; font-weight: 600; }
+  .setup .ar { color: var(--muted); text-align: center; }
+  @media (max-width: 560px) { .setup { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<main>
+
+<p class="kicker">Foundry 数据集层 · 第 7 课 · 短课 · 约 15～20 分钟</p>
+<h1>权限：角色不跟着数据走，标记跟着走</h1>
+<p class="lede">这一课只讲一个点：项目角色只沿文件夹往下继承；标记（Marking）除此之外还会沿血缘传到派生数据集。学完你能判断一个人能不能看某个数据集，以及缺的是什么。</p>
+
+<div class="chain" aria-label="整条链路中本课的位置">
+  <span>文件</span><i>→</i><span>事务</span><i>→</i><span>视图</span><i>→</i>
+  <span>分支</span><i>→</i><span>构建</span><i>→</i><span>质量检查</span><i>→</i><span>Ontology</span><i>→</i><span class="here">权限</span>
+</div>
+
+<h2>0. 回忆热身（约 5 分钟）</h2>
+<div class="quiz" data-answer="1" data-explain="中间是 Funnel：它读取数据源，把数据索引进对象数据库，并在数据源更新时保持最新。对象数据库是终点。">
+  <p>数据集里新提交的数据，是怎么变成对象的？</p>
+  <ol>
+    <li>调度任务直接同步对象</li>
+    <li>索引服务读取并建索引</li>
+    <li>构建时顺手写进对象库</li>
+    <li>用户编辑时实时生成的</li>
+  </ol>
+</div>
+<div class="quiz" data-answer="3" data-explain="官方原话：支撑 Object Storage V2 对象类型的数据集回滚后 manual intervention is required。对象不会自动跟着倒回，所以要人工介入。">
+  <p>支撑 OSv2 对象类型的数据集被回滚了，要注意什么？</p>
+  <ol>
+    <li>对象会自动跟着倒回去</li>
+    <li>什么都不用做就可以了</li>
+    <li>对象会被全部自动删除</li>
+    <li>需要人工介入对齐对象</li>
+  </ol>
+</div>
+<div class="quiz" data-answer="0" data-explain="只加新文件的 UPDATE 和 APPEND 一样，不动旧数据，增量可以继续。另外三种都动了旧数据。">
+  <p>输入上来了哪种事务，增量 transform 仍然可以增量运行？</p>
+  <ol>
+    <li>只加新文件的 UPDATE</li>
+    <li>覆盖旧文件的 UPDATE</li>
+    <li>整体替换的 SNAPSHOT</li>
+    <li>用户手动删的 DELETE</li>
+  </ol>
+</div>
+
+<h2>1. 唯一的知识点（约 5 分钟）</h2>
+<p>Foundry 的访问控制有两种：</p>
+<blockquote>"Markings are a mandatory control, while roles are a discretionary control."
+<cite>— <a href="https://www.palantir.com/docs/foundry/security/markings">Palantir Docs · Markings</a></cite></blockquote>
+<ul>
+  <li><b>角色（Role）</b>：Owner、Editor、Viewer、Discoverer，一般授予在<b>项目</b>上，项目是 Foundry 的核心安全边界<a class="cite" href="https://www.palantir.com/docs/foundry/security/projects-and-roles">[文档]</a>。"自主"的意思是有权限的人可以再授予别人。</li>
+  <li><b>标记（Marking）</b>：比如 PII（个人敏感信息）。要访问一个资源，必须是它上面<b>所有</b>标记的成员；不满足的话，"regardless of role"，什么角色都没用<a class="cite" href="https://www.palantir.com/docs/foundry/security/markings">[文档]</a>。Owner 也不例外。</li>
+</ul>
+<p>比喻：角色是<b>门禁卡</b>，标记是<b>门上的封条</b>。要进门，门禁卡要能刷开，封条你也得每一张都有资格拆。</p>
+
+<h3>关键区别：往哪传</h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th></th><th>沿项目/文件夹往下继承</th><th>沿血缘传到派生数据集</th></tr></thead>
+  <tbody>
+    <tr><td><b>角色</b></td><td>✓ 授在项目上，项目里所有资源都有</td><td><b>✗</b> 只管资源本身，不跟着数据走</td></tr>
+    <tr><td><b>标记</b></td><td>✓</td><td><b>✓</b> 限制了一个数据集，就限制了所有从它派生的数据</td></tr>
+  </tbody>
+</table>
+</div>
+<p class="muted">依据：<a href="https://www.palantir.com/docs/foundry/security/projects-and-roles">Projects and roles</a> 原文说角色 "do not extend to data after it has been read from the resource"；<a href="https://www.palantir.com/docs/foundry/security/markings">Markings</a> 原文说 "Restricting access to a dataset always restricts access to any data derived from it"。</p>
+<p>这样设计的道理：敏感数据被一个 transform 读出来、换个名字放进另一个项目，<b>敏感性不会因此消失</b>，所以标记要跟着走。而角色只是"谁能管这个项目"，没必要跟着数据走。</p>
+<p>标记也能在下游去掉：在 transform 里移除，只影响沿数据依赖往下的部分。但需要标记本身的 <b>Expand Access</b> 权限，项目 Owner 角色也不够<a class="cite" href="https://www.palantir.com/docs/foundry/security/markings">[文档]</a>。</p>
+
+<h2>2. 判断练习（约 5 分钟）</h2>
+<p>所有题目都用下面这个场景：</p>
+<div class="setup" aria-label="练习场景">
+  <div class="pj"><b>项目 A · 原始数据</b><br><span class="ds">flights</span> <span class="mk">标记：PII</span></div>
+  <div class="ar">transform →</div>
+  <div class="pj"><b>项目 B · 分析</b><br><span class="ds">delays</span> <span class="muted">（由 flights 派生）</span></div>
+</div>
+<p>判断这个人能不能访问题目里的数据集；不能的话，缺的是什么。三个选项每题一样。</p>
+<p id="quiz-score" class="muted"></p>
+
+<div class="quiz" data-answer="2" data-explain="delays 从 flights 派生，沿血缘继承了 PII 标记。小王有角色，但不是 PII 成员。">
+  <p>小王在项目 B 是 Viewer，不是 PII 成员。他能访问 <code>delays</code> 吗？</p>
+  <ol><li>可以访问这个数据集</li><li>不能访问：缺少角色</li><li>不能访问：缺少标记</li></ol>
+</div>
+<div class="quiz" data-answer="0" data-explain="项目 B 的 Viewer 角色 + PII 成员资格，两样都满足。">
+  <p>小王在项目 B 是 Viewer，<b>是</b> PII 成员。他能访问 <code>delays</code> 吗？</p>
+  <ol><li>可以访问这个数据集</li><li>不能访问：缺少角色</li><li>不能访问：缺少标记</li></ol>
+</div>
+<div class="quiz" data-answer="1" data-explain="角色不沿血缘往上游传：能看 delays 不代表能看 flights，还需要项目 A 的角色。这正是官方文档里的例子。">
+  <p>还是小王（项目 B 的 Viewer，PII 成员）。他能访问上游的 <code>flights</code> 吗？</p>
+  <ol><li>可以访问这个数据集</li><li>不能访问：缺少角色</li><li>不能访问：缺少标记</li></ol>
+</div>
+<div class="quiz" data-answer="2" data-explain="标记是强制控制：不满足所有标记，什么角色都没用，Owner 也一样。">
+  <p>小赵是项目 A 的 <b>Owner</b>，不是 PII 成员。他能访问 <code>flights</code> 吗？</p>
+  <ol><li>可以访问这个数据集</li><li>不能访问：缺少角色</li><li>不能访问：缺少标记</li></ol>
+</div>
+<div class="quiz" data-answer="0" data-explain="有 Expand Access 权限的人在 transform 里移除了 PII，delays 不再带这个标记；小王有项目 B 的角色就够了。">
+  <p>有 Expand Access 权限的人在生成 <code>delays</code> 的 transform 里移除了 PII 标记，并重新构建。小王是项目 B 的 Viewer，不是 PII 成员。他能访问 <code>delays</code> 吗？</p>
+  <ol><li>可以访问这个数据集</li><li>不能访问：缺少角色</li><li>不能访问：缺少标记</li></ol>
+</div>
+<div class="quiz" data-answer="1" data-explain="标记满足了，但在项目 B 没有任何角色。两把锁缺一把都进不去。">
+  <p>小张是 PII 成员，但在项目 B 没有任何角色。他能访问 <code>delays</code> 吗？</p>
+  <ol><li>可以访问这个数据集</li><li>不能访问：缺少角色</li><li>不能访问：缺少标记</li></ol>
+</div>
+
+<h2>3. 收尾（约 2 分钟）</h2>
+<div class="box goal">
+  <p><b>不看页面，用一句话各答一题：</b></p>
+  <ol>
+    <li>角色和标记，哪个会沿血缘传到派生数据集？为什么要这样设计？</li>
+    <li>项目 Owner 能不能绕过标记？</li>
+    <li>能看派生数据集，就一定能看它的上游吗？为什么？</li>
+  </ol>
+</div>
+
+<div class="box source">
+  <p><b>推荐一手资料：</b><a href="https://www.palantir.com/docs/foundry/security/projects-and-roles">Palantir Docs · Projects and roles</a> 里讲 flights / delays 的那个例子，约 5 分钟。</p>
+  <p><b>速查：</b><a href="../reference/permissions.html">权限速查表</a></p>
+</div>
+
+<div class="box ask">
+  <p><b>有任何没想明白的地方，直接问我。</b>比如"Ontology 里的对象也会继承支撑数据集的标记吗？"</p>
+</div>
+
+<nav class="nav">
+  <a href="0006-ontology-reads-datasets.html">← 第 6 课：Ontology 不直接读数据集</a>
+  <span class="muted">下一课：综合：画出整条链路（待生成）→</span>
+</nav>
+
+</main>
+<script src="../assets/quiz.js"></script>
+</body>
+</html>

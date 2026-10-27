@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>权限速查</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<main>
+<p class="kicker">Foundry 数据集层 · 速查</p>
+<h1>权限：角色与标记</h1>
+<p class="muted">来源：<a href="https://www.palantir.com/docs/foundry/security/markings">Markings</a>、<a href="https://www.palantir.com/docs/foundry/security/projects-and-roles">Projects and roles</a>（2026-10-27 核对）。配套课程：<a href="../lessons/0007-roles-vs-markings.html">第 7 课</a>。</p>
+
+<div class="table-wrap"><table>
+  <thead><tr><th></th><th>角色（Role）</th><th>标记（Marking）</th></tr></thead>
+  <tbody>
+  <tr><td>类型</td><td>自主控制</td><td>强制控制</td></tr>
+  <tr><td>比喻</td><td>门禁卡</td><td>门上的封条</td></tr>
+  <tr><td>常见取值</td><td>Owner、Editor、Viewer、Discoverer</td><td>如 PII</td></tr>
+  <tr><td>沿项目/文件夹向下</td><td>✓</td><td>✓</td></tr>
+  <tr><td>沿血缘到派生数据</td><td>✗</td><td>✓</td></tr>
+  <tr><td>访问条件</td><td colspan="2">有角色，并且是资源上<b>所有</b>标记的成员；不满足标记时任何角色都无效</td></tr>
+  <tr><td>移除</td><td>—</td><td>需要标记的 Expand Access 权限；在 transform 里移除只影响下游</td></tr>
+  </tbody>
+</table></div>
+</main>
+</body>
+</html>
