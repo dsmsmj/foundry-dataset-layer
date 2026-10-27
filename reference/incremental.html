@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>增量与快照速查</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<main>
+<p class="kicker">Foundry 数据集层 · 速查</p>
+<h1>增量与快照</h1>
+<p class="muted">来源：<a href="https://www.palantir.com/docs/foundry/transforms-python/incremental-usage">Palantir Docs · Incremental usage guide</a>（2026-10-27 核对）。配套课程：<a href="../lessons/0004-incremental-vs-snapshot.html">第 4 课</a>。</p>
+
+<h2>判断顺序</h2>
+<ol>
+  <li>输入没新事务、代码没变 → <b>新鲜，不跑</b>（构建层面的规则）。</li>
+  <li>输出从没构建过，或 semantic_version 改了 → <b>快照</b>。</li>
+  <li>非 snapshot 输入出现 SNAPSHOT / 覆盖文件的 UPDATE / 用户 DELETE / 未允许的保留策略 DELETE → <b>快照</b>；若 <code>require_incremental=True</code> 则<b>失败</b>。</li>
+  <li>否则 → <b>增量</b>。</li>
+</ol>
+
+<h2>读写模式</h2>
+<div class="table-wrap"><table>
+  <thead><tr><th>模式</th><th>增量运行</th><th>快照运行</th></tr></thead>
+  <tbody>
+  <tr><td><code>added</code>（默认读）</td><td>上次运行后新增的行</td><td>全部数据</td></tr>
+  <tr><td><code>current</code></td><td>这次的全部输入</td><td>这次的全部输入</td></tr>
+  <tr><td><code>previous</code></td><td>上次运行时的全部输入</td><td>空 DataFrame</td></tr>
+  <tr><td>输出默认写</td><td><code>modify</code>（追加）</td><td><code>replace</code>（整体替换）</td></tr>
+  </tbody>
+</table></div>
+
+<h2>装饰器参数</h2>
+<div class="table-wrap"><table>
+  <tr><th><code>semantic_version</code></th><td>默认 1；改了强制下一次非增量</td></tr>
+  <tr><th><code>require_incremental</code></th><td>不能增量就失败（首次构建、改 semantic_version 除外）</td></tr>
+  <tr><th><code>allow_retention</code></th><td>保留策略删除文件不破坏增量</td></tr>
+  <tr><th><code>snapshot_inputs</code></th><td>声明某些输入可整体重写而不破坏增量</td></tr>
+</table></div>
+
+<h2>一句话</h2>
+<p>增量的前提是输入"只往后追加"。旧数据被换、被改、被删，就只能从头算。</p>
+</main>
+</body>
+</html>

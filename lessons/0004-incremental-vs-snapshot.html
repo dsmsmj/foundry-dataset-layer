@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 4 课 · 增量与快照</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<main>
+
+<p class="kicker">Foundry 数据集层 · 第 4 课 · 约 30 分钟</p>
+<h1>增量与快照：这次只算新的，还是从头算？</h1>
+<p class="lede">学完这一课，告诉你一个增量 transform 的输入上次运行后来了哪些新事务，你能说出这次它是增量跑、退回快照、构建失败，还是根本不跑。</p>
+
+<div class="chain" aria-label="整条链路中本课的位置">
+  <span>文件</span><i>→</i><span>事务</span><i>→</i><span>视图</span><i>→</i>
+  <span>分支</span><i>→</i><span class="here">构建</span><i>→</i><span>质量检查</span><i>→</i><span>Ontology</span><i>→</i><span>权限</span>
+</div>
+<p class="muted">还在"构建"这一环，往深走一层：第 3 课回答"跑不跑"，这一课回答"怎么跑"。</p>
+
+<h2>0. 热身：把前两课串起来</h2>
+<div class="quiz" data-answer="3" data-explain="上游重算后提交了新事务；对下游来说，它的输入变了，于是不新鲜。下游自己的代码没动。">
+  <p>上游 clean_orders 被重算后，下游 order_facts 为什么也要重算？</p>
+  <ol>
+    <li>它的代码也被改动了</li>
+    <li>所有数据集都会重算</li>
+    <li>上游会通知它去重算</li>
+    <li>它的输入有了新事务</li>
+  </ol>
+</div>
+<div class="quiz" data-answer="1" data-explain="输入沿 fallback 链往后退，读第一个存在的分支 develop；构建从不在输入上建分支。">
+  <p>在 feature 分支上构建，fallback 链是 feature → develop → master。某个输入只有 develop 和 master 分支，它读哪个？</p>
+  <ol>
+    <li>feature</li>
+    <li>develop</li>
+    <li>master</li>
+    <li>报错</li>
+  </ol>
+</div>
+<p>顺带修正上次复述里的一个说法：变化是<b>顺着依赖</b>往下游传的，但构建不是一个接一个"串行"跑。互相没有依赖的 Job 会并行执行，只有存在依赖的 Job 才要等上游跑完<a class="cite" href="../research/foundry-dataset-layer.md">[调研笔记 §5]</a>。</p>
+
+<h2>1. 默认的 transform 每次都从头算</h2>
+<p>普通 transform 每次运行，都会读<b>输入的全部数据</b>，算完后<b>整体替换</b>输出。用第 1 课的话说，输出上提交的是一条 SNAPSHOT。</p>
+<p>数据量小时这没问题。但想象一张每天追加几百万行的事件表：为了今天新来的那一点，把过去三年的数据全部重算一遍，太浪费了。</p>
+<p><b>增量 transform</b> 就是来解决这个的：它能查看自己上一次运行的信息，判断这次能不能<b>只处理新增的部分</b>；能就增量跑，不能就自动退回快照<a class="cite" href="https://www.palantir.com/docs/foundry/transforms-python/incremental-usage">[文档]</a>。</p>
+<p class="muted">本课讲的是 Python 代码仓库里的增量 transform（<code>@incremental()</code> 装饰器）。Pipeline Builder 有自己的一套，原理相同。</p>
+
+<h2>2. 增量跑的时候，读到什么、写成什么</h2>
+<div class="table-wrap">
+<table>
+  <thead><tr><th></th><th>增量运行</th><th>退回快照运行</th></tr></thead>
+  <tbody>
+    <tr><td>输入默认读模式 <code>added</code></td><td>只有<b>上次运行后新增的行</b></td><td>输入的<b>全部</b>数据</td></tr>
+    <tr><td>输出默认写模式</td><td><code>modify</code>：追加到已有输出上</td><td><code>replace</code>：整体替换输出</td></tr>
+  </tbody>
+</table>
+</div>
+<p class="muted">出自 <a href="https://www.palantir.com/docs/foundry/transforms-python/incremental-usage">Incremental modes of inputs and outputs</a>。另外还有 <code>current</code>（这次的全量输入）和 <code>previous</code>（上次运行时的全量输入）两种读模式，先知道有就行。</p>
+
+<div class="quiz" data-answer="1" data-explain="added 是默认读模式：增量运行时只返回上次运行之后新追加的行。">
+  <p>增量运行时，默认读模式 <code>added</code> 读到的是什么？</p>
+  <ol>
+    <li>输入当前的全部数据</li>
+    <li>上次运行后新增的行</li>
+    <li>上次运行时的全部行</li>
+    <li>输出里已有的那些行</li>
+  </ol>
+</div>
+
+<h2>3. 什么时候不能增量</h2>
+<p>关键问题：<b>"只看新增的行"在什么时候是对的？</b>只有输入是"只往后追加"的时候。一旦旧数据被换掉、改掉或删掉，光看新增部分就会算错。这正是第 1 课那四种事务的区别：</p>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>输入上的新事务</th><th>能增量吗</th><th>原因</th></tr></thead>
+  <tbody>
+    <tr><td><span class="tx APPEND">APPEND</span></td><td>✓</td><td>只加新文件</td></tr>
+    <tr><td><span class="tx UPDATE">UPDATE</span> 只加新文件</td><td>✓</td><td>和追加一样</td></tr>
+    <tr><td><span class="tx UPDATE">UPDATE</span> 覆盖已有文件</td><td>✗ 退回快照</td><td>旧数据被改了</td></tr>
+    <tr><td><span class="tx SNAPSHOT">SNAPSHOT</span></td><td>✗ 退回快照</td><td>旧数据被整体换掉</td></tr>
+    <tr><td><span class="tx DELETE">DELETE</span> 用户删除</td><td>✗ 默认退回快照</td><td>旧数据少了</td></tr>
+    <tr><td><span class="tx DELETE">DELETE</span> 保留策略删除</td><td>设了 <code>allow_retention=True</code> 才 ✓</td><td>清理旧文件是常态，可以声明允许</td></tr>
+  </tbody>
+</table>
+</div>
+<p>此外两种情况一定是快照运行：<b>输出从没构建过</b>（第一次没有"上次"），以及 <b>semantic_version 改了</b>。这些规则都出自 <a href="https://www.palantir.com/docs/foundry/transforms-python/incremental-usage">Requirements for incremental computation</a>。</p>
+
+<div class="quiz" data-answer="2" data-explain="SNAPSHOT 换掉了全部旧数据，只看新增部分会漏掉被替换的内容，只能全量重算。">
+  <p>为什么输入上来了一条 SNAPSHOT，增量 transform 就要退回快照？</p>
+  <ol>
+    <li>快照文件格式不兼容</li>
+    <li>快照事务提交得太慢</li>
+    <li>无法只看新增的部分</li>
+    <li>增量只支持一个输入</li>
+  </ol>
+</div>
+
+<h3>四个开关</h3>
+<div class="table-wrap">
+<table>
+  <tbody>
+    <tr><th><code>semantic_version</code></th><td>默认 1。改它会强制下一次<b>非增量</b>运行。改了逻辑、需要把历史数据重算一遍时用。</td></tr>
+    <tr><th><code>require_incremental=True</code></th><td>不能增量时<b>直接失败</b>，而不是悄悄退回快照。第一次构建和改了 semantic_version 时仍允许快照。</td></tr>
+    <tr><th><code>allow_retention=True</code></th><td>允许保留策略删除输入/输出里的文件而不破坏增量。</td></tr>
+    <tr><th><code>snapshot_inputs</code></th><td>把某些输入声明为快照输入：它们被整体重写也不影响增量。适合小的维表，比如地区对照表。</td></tr>
+  </tbody>
+</table>
+</div>
+<p class="muted">四条都出自 <a href="https://www.palantir.com/docs/foundry/transforms-python/incremental-usage">Incremental decorator</a>。</p>
+<p>为什么会有人想要 <code>require_incremental</code>？因为对大表来说，悄悄退回快照可能意味着一次几小时的全量重算。宁可让构建失败、让人来看一眼。</p>
+<p id="quiz-score" class="muted"></p>
+
+<h2>4. 练习：这次怎么跑</h2>
+<p>每题给出增量 transform 的设置，以及每个输入上次运行后来了哪些新事务。四个选项里选一个。注意第 4 个选项：如果输入根本没有新事务，第 3 课的新鲜度规则先起作用。前 8 题固定，之后随机。建议连续答对 4 道随机题再结束。</p>
+<div id="insim"></div>
+
+<h2>5. 收尾</h2>
+<div class="box goal">
+  <p><b>不看页面，回答这三个问题：</b></p>
+  <ol>
+    <li>增量运行和快照运行，输入读到的和输出写成的分别有什么不同？</li>
+    <li>输入上出现哪几种事务会让增量 transform 退回快照？背后的共同原因是什么？</li>
+    <li><code>require_incremental=True</code> 改变了什么？为什么有人想要它？</li>
+  </ol>
+  <p>下次开课前再答一遍。</p>
+</div>
+
+<div class="box source">
+  <p><b>推荐一手资料：</b><a href="https://www.palantir.com/docs/foundry/transforms-python/incremental-usage">Palantir Docs · Incremental usage guide</a>。读 <i>Incremental modes of inputs and outputs</i> 的汇总表和 <i>Summary of requirements for incremental computation</i>，约 10 分钟。</p>
+  <p><b>速查：</b><a href="../reference/incremental.html">增量与快照速查表</a> · <a href="../reference/builds.html">构建速查</a> · <a href="../reference/transactions.html">事务速查</a></p>
+</div>
+
+<div class="box ask">
+  <p><b>有任何没想明白的地方，直接问我。</b>比如"增量 transform 的输出提交的是什么类型的事务？"或"上游退回快照之后，下游的增量 transform 会怎样？"。</p>
+</div>
+
+<nav class="nav">
+  <a href="0003-builds-and-staleness.html">← 第 3 课：构建与新鲜度</a>
+  <span class="muted">下一课：质量检查（待生成）→</span>
+</nav>
+
+</main>
+<script src="../assets/quiz.js"></script>
+<script src="../assets/incr-sim.js"></script>
+<script>
+  IncrSim.mountIncremental(document.getElementById("insim"), {
+    scenarios: [
+      { inputs: [{ name: "events", txs: ["APPEND", "APPEND"] }] },
+      { inputs: [{ name: "events", txs: ["APPEND", "SNAPSHOT"] }] },
+      { inputs: [{ name: "events", txs: ["UPDATE_OVERWRITE"] }] },
+      { inputs: [{ name: "events", txs: ["APPEND"] }, { name: "regions", txs: ["SNAPSHOT"], snapshotInput: true }] },
+      { inputs: [{ name: "events", txs: ["APPEND", "DELETE_RETENTION"] }], allowRetention: true },
+      { inputs: [{ name: "events", txs: ["SNAPSHOT"] }], requireIncremental: true },
+      { inputs: [{ name: "events", txs: [] }] },
+      { inputs: [{ name: "events", txs: ["APPEND"] }], requireIncremental: true, semverChanged: true }
+    ]
+  });
+</script>
+</body>
+</html>
