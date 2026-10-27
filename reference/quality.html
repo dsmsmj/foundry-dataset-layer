@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>质量检查速查</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<main>
+<p class="kicker">Foundry 数据集层 · 速查</p>
+<h1>质量检查：关卡与报警器</h1>
+<p class="muted">来源：<a href="https://www.palantir.com/docs/foundry/maintaining-pipelines/define-data-expectations">Define data expectations</a>（2026-10-27 核对）、<a href="https://www.palantir.com/docs/foundry/data-health/check-types">Data Health check types</a>。配套课程：<a href="../lessons/0005-expectations-vs-health-checks.html">第 5 课</a>。</p>
+
+<div class="table-wrap"><table>
+  <thead><tr><th></th><th>Data Expectations</th><th>Data Health 检查</th></tr></thead>
+  <tbody>
+  <tr><td>比喻</td><td>安检门</td><td>烟雾报警器</td></tr>
+  <tr><td>写在哪</td><td>transform 代码，挂在输入/输出</td><td>数据集或调度上，Data Health 配置</td></tr>
+  <tr><td>何时跑</td><td>构建 Job 运行期间</td><td>多数在 Job 结束后</td></tr>
+  <tr><td>失败</td><td>FAIL（默认）：Job 中止；WARN：继续并告警</td><td>只告警</td></tr>
+  <tr><td>能挡坏数据？</td><td>FAIL 能（推论：输出事务被放弃）</td><td>不能</td></tr>
+  </tbody>
+</table></div>
+
+<h2>两个词</h2>
+<ul>
+  <li><b>pre-condition</b>：挂在输入上，失败则 transform 的输出被中止。</li>
+  <li><b>post-condition</b>：挂在输出上，保护下游。</li>
+</ul>
+</main>
+</body>
+</html>

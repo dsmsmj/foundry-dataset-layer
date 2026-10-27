@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 5 课 · 关卡与报警器</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<main>
+
+<p class="kicker">Foundry 数据集层 · 第 5 课 · 短课 · 约 15～20 分钟</p>
+<h1>质量检查：关卡还是报警器？</h1>
+<p class="lede">这一课只讲一个点：Data Expectations 在构建<b>里面</b>拦截坏数据，Data Health 检查在构建<b>之后</b>发现问题并告警。学完你能判断一次检查失败后，坏数据会不会进入视图。</p>
+
+<div class="chain" aria-label="整条链路中本课的位置">
+  <span>文件</span><i>→</i><span>事务</span><i>→</i><span>视图</span><i>→</i>
+  <span>分支</span><i>→</i><span>构建</span><i>→</i><span class="here">质量检查</span><i>→</i><span>Ontology</span><i>→</i><span>权限</span>
+</div>
+
+<h2>0. 回忆热身（约 5 分钟）</h2>
+<p class="muted">每题只能答一次，先在脑子里说出答案再点。答错没关系，回忆本身就是练习。</p>
+
+<div class="quiz" data-answer="0" data-explain="semantic_version 默认就是 1；是改动它（比如 1→2）才强制下一次非增量运行。它是代码里的设置，不是输入上的事务。">
+  <p>下面哪种情况会让增量 transform 下一次强制快照运行？</p>
+  <ol>
+    <li>把 semantic_version 从 1 改成 2</li>
+    <li>保持 semantic_version 等于 1</li>
+    <li>输入上新提交了一条 APPEND</li>
+    <li>给 transform 加上 allow_retention</li>
+  </ol>
+</div>
+
+<div class="quiz" data-answer="2" data-explain="保留策略删除了旧文件，旧数据少了；没声明 allow_retention=True，就只能退回快照。">
+  <p>输入上来一条"保留策略删除旧文件"的 DELETE，没设 allow_retention，增量 transform 会怎样？</p>
+  <ol>
+    <li>照常增量，只读新增</li>
+    <li>新鲜跳过，不会运行</li>
+    <li>退回快照，全量重算</li>
+    <li>构建直接报错并失败</li>
+  </ol>
+</div>
+
+<div class="quiz" data-answer="1" data-explain="输出的事务总写在构建分支上；分支不存在时，从 fallback 链的第一个分支（develop）创建。">
+  <p>在 feature 上构建，链是 feature → develop → master。输出还没有 feature 分支，这个分支从哪里创建？</p>
+  <ol>
+    <li>从 master 创建</li>
+    <li>从 develop 创建</li>
+    <li>作为根分支创建</li>
+    <li>不建，写到 develop</li>
+  </ol>
+</div>
+
+<div class="quiz" data-answer="3" data-explain="输入和 JobSpec 都没变，输出新鲜，构建直接跳过它。">
+  <p>某输出的输入没有新事务，代码也没改。这次构建它会怎样？</p>
+  <ol>
+    <li>全量重新计算一遍</li>
+    <li>增量只读新增部分</li>
+    <li>构建失败并报错误</li>
+    <li>被跳过，不会重算</li>
+  </ol>
+</div>
+
+<h2>1. 唯一的知识点（约 5 分钟）</h2>
+<p>Foundry 有两种质量检查。用一个比喻记：<b>Expectation 是安检门，Data Health 检查是烟雾报警器。</b>安检门在你进去之前拦人；报警器在火已经烧起来之后才响。</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th></th><th>Data Expectations（安检门）</th><th>Data Health 检查（报警器）</th></tr></thead>
+  <tbody>
+    <tr><td>写在哪</td><td>transform 代码里，挂在<b>输入或输出</b>上</td><td>挂在<b>数据集或调度</b>上，在 Data Health 里配置</td></tr>
+    <tr><td>什么时候跑</td><td><b>构建 Job 运行期间</b></td><td>大多数检查要等 <b>Job 结束后</b>才计算</td></tr>
+    <tr><td>失败了会怎样</td><td><code>FAIL</code>：Job 被中止；<code>WARN</code>：继续跑，发一条警告</td><td>只告警，不拦数据</td></tr>
+  </tbody>
+</table>
+</div>
+<p class="muted">依据：<a href="https://www.palantir.com/docs/foundry/maintaining-pipelines/define-data-expectations">Define data expectations</a> 原文 "The registered checks will run as part of the build job"；<a href="https://www.palantir.com/docs/foundry/data-health/check-types">Data Health check types</a> 说大多数标准检查要等 Job 结束才能计算。</p>
+
+<p>为什么 <code>FAIL</code> 能挡住坏数据？用第 3 课和第 1 课推一下：Job 被中止 → 它在输出上开的那条事务被放弃（ABORTED）→ 第 1 课说过，ABORTED 事务写的文件被忽略 → <b>坏数据进不了视图</b>，下游读到的还是上一次的好数据。</p>
+<p class="muted">这条是由几课的规则推出来的结论，文档原文只写到"Job 状态变为 Aborted"。</p>
+
+<p>还有两个小词：</p>
+<ul>
+  <li>挂在<b>输入</b>上的检查叫 <b>pre-condition</b>（前置条件）：开工前先验收原料，失败则这个 transform 的输出被中止。</li>
+  <li>挂在<b>输出</b>上的检查叫 <b>post-condition</b>（后置条件）：出厂前验收成品，保护下游。</li>
+</ul>
+<p>Expectation 的结果也会上报到 Data Health 里统一看。不写 <code>on_error</code> 时，默认是 <code>FAIL</code><a class="cite" href="../research/foundry-dataset-layer.md">[调研笔记 §6.2]</a>。</p>
+
+<h2>2. 分类练习（约 5 分钟）</h2>
+<p>每题描述一个检查和一次失败。判断结果是哪一种。三个选项在每题里都一样。</p>
+<p id="quiz-score" class="muted"></p>
+
+<div class="quiz" data-answer="0" data-explain="输出上的 Expectation，FAIL：Job 中止，输出事务被放弃，坏数据进不了视图。">
+  <p>输出上有一条主键检查，<code>on_error='FAIL'</code>。这次构建出现了重复的 id。</p>
+  <ol><li>作业中止，坏数据进不了视图</li><li>构建继续，同时发出一条警告</li><li>数据已经提交，事后才告警你</li></ol>
+</div>
+<div class="quiz" data-answer="1" data-explain="WARN：Job 继续，警告交给 Data Health 处理。数据照常提交。">
+  <p>同一条主键检查，但写的是 <code>on_error='WARN'</code>。又出现了重复 id。</p>
+  <ol><li>作业中止，坏数据进不了视图</li><li>构建继续，同时发出一条警告</li><li>数据已经提交，事后才告警你</li></ol>
+</div>
+<div class="quiz" data-answer="2" data-explain="Data Health 的行数检查在 Job 结束后计算，只告警。数据此时已经提交了。">
+  <p>数据集上配了 Data Health 的 Row count 检查。今天构建完，行数比平时少了一半。</p>
+  <ol><li>作业中止，坏数据进不了视图</li><li>构建继续，同时发出一条警告</li><li>数据已经提交，事后才告警你</li></ol>
+</div>
+<div class="quiz" data-answer="0" data-explain="输入上的 pre-condition 失败，transform 的输出被中止。">
+  <p>transform 的<b>输入</b>上有一条 schema 检查（pre-condition），<code>FAIL</code>。上游悄悄删了一列。</p>
+  <ol><li>作业中止，坏数据进不了视图</li><li>构建继续，同时发出一条警告</li><li>数据已经提交，事后才告警你</li></ol>
+</div>
+<div class="quiz" data-answer="0" data-explain="不写 on_error 时默认是 FAIL。">
+  <p>输出上有一条非空检查，代码里<b>没写</b> <code>on_error</code>。这次出现了空值。</p>
+  <ol><li>作业中止，坏数据进不了视图</li><li>构建继续，同时发出一条警告</li><li>数据已经提交，事后才告警你</li></ol>
+</div>
+<div class="quiz" data-answer="2" data-explain="Time since last updated 是 Data Health 检查，只告警，不会拦任何东西。">
+  <p>数据集上配了 Data Health 的 "Time since last updated" 检查，阈值 26 小时。它已经 30 小时没有新事务了。</p>
+  <ol><li>作业中止，坏数据进不了视图</li><li>构建继续，同时发出一条警告</li><li>数据已经提交，事后才告警你</li></ol>
+</div>
+
+<h2>3. 收尾（约 2 分钟）</h2>
+<div class="box goal">
+  <p><b>不看页面，用一句话各答一题：</b></p>
+  <ol>
+    <li>Expectation 和 Data Health 检查，哪个能挡住坏数据？为什么？</li>
+    <li>Expectation 的 FAIL 和 WARN 有什么区别？不写时默认是哪个？</li>
+    <li>pre-condition 和 post-condition 分别挂在哪？</li>
+  </ol>
+</div>
+
+<div class="box source">
+  <p><b>推荐一手资料：</b><a href="https://www.palantir.com/docs/foundry/maintaining-pipelines/define-data-expectations">Palantir Docs · Define data expectations</a>，一页，约 5 分钟。</p>
+  <p><b>速查：</b><a href="../reference/quality.html">质量检查速查表</a></p>
+</div>
+
+<div class="box ask">
+  <p><b>有任何没想明白的地方，直接问我。</b>比如"既然 Expectation 能拦，为什么还要 Data Health？"</p>
+</div>
+
+<nav class="nav">
+  <a href="0004-incremental-vs-snapshot.html">← 第 4 课：增量与快照</a>
+  <span class="muted">下一课：Ontology 如何读取数据集（待生成）→</span>
+</nav>
+
+</main>
+<script src="../assets/quiz.js"></script>
+</body>
+</html>
